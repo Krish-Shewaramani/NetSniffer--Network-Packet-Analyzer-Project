@@ -1,0 +1,6 @@
+# NetSniff — Python dependencies
+# Install with: pip install -r requirements.txt
+
+fastapi==0.111.0          # Web framework + SSE support
+uvicorn[standard]==0.30.1 # ASGI server
+scapy==2.5.0              # Packet capture & dissection

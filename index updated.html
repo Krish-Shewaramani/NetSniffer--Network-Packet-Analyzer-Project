@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NetSniff — Packet Analyzer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Design tokens ─────────────────────────────────────────────────── */
+    :root {
+      --bg-void:      #080b10;
+      --bg-panel:     #0d1117;
+      --bg-row:       #111820;
+      --bg-row-alt:   #0f1520;
+      --border:       #1c2a3a;
+      --border-glow:  #00e5ff33;
+
+      --cyan:         #00e5ff;
+      --cyan-dim:     #00e5ff66;
+      --cyan-faint:   #00e5ff18;
+      --green:        #39ff14;
+      --green-dim:    #39ff1466;
+      --amber:        #ffb300;
+      --amber-dim:    #ffb30055;
+      --red:          #ff1744;
+      --red-dim:      #ff174422;
+
+      --text-primary:   #cdd9e5;
+      --text-secondary: #637589;
+      --text-mono:      #a8d8ea;
+
+      --font-display: 'Rajdhani', sans-serif;
+      --font-mono:    'Share Tech Mono', monospace;
+    }
+
+    /* ── Reset & base ───────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg-void);
+      color: var(--text-primary);
+      font-family: var(--font-display);
+      overflow: hidden;
+    }
+
+    /* Subtle scanline overlay — the signature aesthetic element */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.08) 2px,
+        rgba(0,0,0,0.08) 4px
+      );
+      pointer-events: none;
+      z-index: 100;
+    }
+
+    /* ── Layout shell ───────────────────────────────────────────────────── */
+    #app {
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      height: 100vh;
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+    }
+
+    /* ── Top bar ────────────────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.9rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      text-decoration: none;
+    }
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      flex-shrink: 0;
+    }
+    .logo-text {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      line-height: 1;
+    }
+    .logo-name {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #fff;
+      line-height: 1.1;
+    }
+    .logo-tag {
+      font-family: var(--font-mono);
+      font-size: 0.58rem;
+      color: var(--text-secondary);
+      letter-spacing: 0.12em;
+      margin-top: 1px;
+    }
+
+    .header-spacer { flex: 1; }
+
+    /* Status indicator */
+    #status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--text-secondary);
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+    #status-dot.active {
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green), 0 0 16px var(--green-dim);
+      animation: pulse 1.8s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 6px var(--green), 0 0 12px var(--green-dim); }
+      50%       { box-shadow: 0 0 12px var(--green), 0 0 24px var(--green-dim); }
+    }
+    #status-label {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--text-secondary);
+      letter-spacing: 0.1em;
+    }
+    #status-dot.active + #status-label { color: var(--green); }
+
+    /* GitHub link */
+    .gh-link {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--text-secondary);
+      text-decoration: none;
+      border: 1px solid var(--border);
+      padding: 0.3rem 0.7rem;
+      border-radius: 3px;
+      letter-spacing: 0.08em;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .gh-link:hover { border-color: var(--cyan-dim); color: var(--cyan); }
+
+    /* Controls */
+    .controls { display: flex; align-items: center; gap: 0.6rem; }
+
+    select#proto-filter {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      padding: 0.3rem 0.6rem;
+      border-radius: 3px;
+      cursor: pointer;
+      outline: none;
+      letter-spacing: 0.06em;
+    }
+    select#proto-filter:focus { border-color: var(--cyan-dim); }
+    select#proto-filter.filtered {
+      border-color: var(--cyan-dim);
+      color: var(--cyan);
+    }
+    #filter-count {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      color: var(--cyan);
+      letter-spacing: 0.08em;
+      display: none;
+    }
+    #filter-count.visible { display: inline; }
+
+    button {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 0.8rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      border: none;
+      border-radius: 3px;
+      padding: 0.4rem 1.2rem;
+      cursor: pointer;
+      transition: opacity 0.15s, box-shadow 0.15s;
+    }
+    button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    #btn-start {
+      background: var(--cyan);
+      color: #000;
+      box-shadow: 0 0 12px var(--cyan-dim);
+    }
+    #btn-start:hover:not(:disabled) { box-shadow: 0 0 20px var(--cyan); }
+
+    #btn-stop {
+      background: transparent;
+      color: var(--red);
+      border: 1px solid var(--red);
+    }
+    #btn-stop:hover:not(:disabled) { background: var(--red-dim); }
+
+    #btn-clear {
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      font-size: 0.72rem;
+    }
+    #btn-clear:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+
+    /* ── Stats panel ────────────────────────────────────────────────────── */
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 0.75rem;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .stat-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.6rem 0.9rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+    }
+    .stat-card.total::before  { background: var(--cyan); }
+    .stat-card.tcp::before    { background: #7c4dff; }
+    .stat-card.udp::before    { background: #00bcd4; }
+    .stat-card.icmp::before   { background: var(--green); }
+    .stat-card.other::before  { background: var(--text-secondary); }
+    .stat-card.warn::before   { background: var(--amber); }
+
+    .stat-label {
+      font-family: var(--font-mono);
+      font-size: 0.6rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      margin-bottom: 0.25rem;
+    }
+    .stat-value {
+      font-family: var(--font-mono);
+      font-size: 1.6rem;
+      line-height: 1;
+      color: var(--text-primary);
+      transition: color 0.15s;
+    }
+    .stat-card.warn .stat-value { color: var(--amber); }
+
+    /* ── Packet table ───────────────────────────────────────────────────── */
+    .table-wrapper {
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      padding-bottom: 0.75rem;
+    }
+
+    /* Column header */
+    .table-head {
+      display: grid;
+      grid-template-columns: 3.5rem 5.5rem 9rem 9rem 4.5rem 4.5rem 1fr;
+      gap: 0;
+      padding: 0.45rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-panel);
+      border-radius: 4px 4px 0 0;
+      margin-top: 0.6rem;
+    }
+    .col-head {
+      font-family: var(--font-mono);
+      font-size: 0.6rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+    }
+
+    /* Scrollable body */
+    #packet-list {
+      flex: 1;
+      overflow-y: auto;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-top: none;
+      border-radius: 0 0 4px 4px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    #packet-list::-webkit-scrollbar { width: 6px; }
+    #packet-list::-webkit-scrollbar-track { background: transparent; }
+    #packet-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* Empty / idle state */
+    #empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      height: 100%;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+    }
+    #empty-state .big-icon {
+      font-size: 2.5rem;
+      opacity: 0.25;
+    }
+
+    /* Packet row */
+    .packet-row {
+      display: grid;
+      grid-template-columns: 3.5rem 5.5rem 9rem 9rem 4.5rem 4.5rem 1fr;
+      gap: 0;
+      padding: 0.3rem 0.75rem;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+      align-items: center;
+      animation: rowSlide 0.15s ease-out;
+      transition: background 0.15s;
+    }
+    .packet-row:hover { background: rgba(0,229,255,0.04); }
+    @keyframes rowSlide {
+      from { opacity: 0; transform: translateX(-6px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    /* Warning row colouring */
+    .packet-row.warn-row {
+      background: var(--amber-dim) !important;
+      border-left: 2px solid var(--amber);
+    }
+    .packet-row.warn-row:hover { background: rgba(255,179,0,0.12) !important; }
+
+    .cell {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--text-mono);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding-right: 0.5rem;
+    }
+    .cell-id   { color: var(--text-secondary); font-size: 0.62rem; }
+    .cell-ts   { color: var(--text-secondary); }
+    .cell-src  { color: var(--cyan); }
+    .cell-dst  { color: #7c9cbf; }
+    .cell-size { color: var(--text-secondary); }
+
+    /* Protocol badge */
+    .proto-badge {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.58rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      padding: 0.1rem 0.35rem;
+      border-radius: 2px;
+      text-transform: uppercase;
+    }
+    .proto-tcp  { background: rgba(124,77,255,0.18); color: #b39dff; border: 1px solid rgba(124,77,255,0.35); }
+    .proto-udp  { background: rgba(0,188,212,0.15); color: #80deea; border: 1px solid rgba(0,188,212,0.3); }
+    .proto-icmp { background: rgba(57,255,20,0.12); color: var(--green); border: 1px solid rgba(57,255,20,0.25); }
+    .proto-other { background: rgba(100,100,100,0.15); color: #888; border: 1px solid #333; }
+
+    /* Warning badge */
+    .warn-badge {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.56rem;
+      letter-spacing: 0.06em;
+      padding: 0.1rem 0.4rem;
+      border-radius: 2px;
+      background: rgba(255,179,0,0.15);
+      color: var(--amber);
+      border: 1px solid rgba(255,179,0,0.4);
+      white-space: nowrap;
+    }
+
+    /* ── Scrollbar for the whole page ───────────────────────────────────── */
+    * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Header ──────────────────────────────────────────────────────── -->
+  <header>
+    <div class="logo">
+      <!-- Network/packet icon: shield with signal waves -->
+      <svg class="logo-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M16 2L4 7v9c0 6.6 5.1 12.8 12 14.3C22.9 28.8 28 22.6 28 16V7L16 2z"
+              fill="rgba(0,229,255,0.1)" stroke="#00e5ff" stroke-width="1.5" stroke-linejoin="round"/>
+        <circle cx="16" cy="15" r="2" fill="#00e5ff"/>
+        <path d="M11 11.5a7 7 0 0 1 10 0" stroke="#00e5ff" stroke-width="1.4" stroke-linecap="round" fill="none" opacity="0.7"/>
+        <path d="M13.2 13.7a4 4 0 0 1 5.6 0" stroke="#00e5ff" stroke-width="1.4" stroke-linecap="round" fill="none" opacity="0.9"/>
+        <path d="M16 17v3.5" stroke="#00e5ff" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <div class="logo-text">
+        <span class="logo-name">NetSniff</span>
+        <span class="logo-tag">Packet Analyzer v1.0</span>
+      </div>
+    </div>
+    <div class="header-spacer"></div>
+
+    <div id="status-dot"></div>
+    <span id="status-label">IDLE</span>
+
+    <a href="https://github.com/krishnan-jayakumar/Netwok-Packet-Analyzer--Project" class="gh-link" target="_blank">GitHub</a>
+
+    <div class="controls">
+      <select id="proto-filter" title="Filter displayed packets by protocol">
+        <option value="all">All Protocols</option>
+        <option value="TCP">TCP</option>
+        <option value="UDP">UDP</option>
+        <option value="ICMP">ICMP</option>
+        <option value="Other">Other</option>
+      </select>
+      <span id="filter-count"></span>
+      <button id="btn-start">Start</button>
+      <button id="btn-stop" disabled>Stop</button>
+      <button id="btn-clear">Clear</button>
+    </div>
+  </header>
+
+  <!-- ── Stats bar ────────────────────────────────────────────────────── -->
+  <div class="stats-bar">
+    <div class="stat-card total">
+      <div class="stat-label">Total Packets</div>
+      <div class="stat-value" id="s-total">0</div>
+    </div>
+    <div class="stat-card tcp">
+      <div class="stat-label">TCP</div>
+      <div class="stat-value" id="s-tcp">0</div>
+    </div>
+    <div class="stat-card udp">
+      <div class="stat-label">UDP</div>
+      <div class="stat-value" id="s-udp">0</div>
+    </div>
+    <div class="stat-card icmp">
+      <div class="stat-label">ICMP</div>
+      <div class="stat-value" id="s-icmp">0</div>
+    </div>
+    <div class="stat-card other">
+      <div class="stat-label">Other</div>
+      <div class="stat-value" id="s-other">0</div>
+    </div>
+    <div class="stat-card warn">
+      <div class="stat-label">⚠ Warnings</div>
+      <div class="stat-value" id="s-warn">0</div>
+    </div>
+  </div>
+
+  <!-- ── Packet table ─────────────────────────────────────────────────── -->
+  <div class="table-wrapper">
+    <div class="table-head">
+      <span class="col-head">#</span>
+      <span class="col-head">Time</span>
+      <span class="col-head">Source IP</span>
+      <span class="col-head">Destination IP</span>
+      <span class="col-head">Protocol</span>
+      <span class="col-head">Size</span>
+      <span class="col-head">Flags / Alerts</span>
+    </div>
+
+    <div id="packet-list">
+      <div id="empty-state">
+        <span class="big-icon">◎</span>
+        <span>Press <strong>Start</strong> to begin packet capture</span>
+        <span style="color:#3a4a5a;font-size:0.65rem;">Requires elevated privileges — see README</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ── NetSniff Frontend ───────────────────────────────────────────────────
+   All packets are stored in `packetStore[]`. The protocol filter dropdown
+   works at any time (before, during, or after capture) and re-renders the
+   visible rows instantly from the store — no backend restart needed.
+   ───────────────────────────────────────────────────────────────────── */
+
+const API = 'http://127.0.0.1:8000';
+
+// ── DOM refs ──────────────────────────────────────────────────────────────
+const btnStart    = document.getElementById('btn-start');
+const btnStop     = document.getElementById('btn-stop');
+const btnClear    = document.getElementById('btn-clear');
+const protoFilter = document.getElementById('proto-filter');
+const filterCount = document.getElementById('filter-count');
+const packetList  = document.getElementById('packet-list');
+const statusDot   = document.getElementById('status-dot');
+const statusLabel = document.getElementById('status-label');
+
+const statEls = {
+  total: document.getElementById('s-total'),
+  tcp:   document.getElementById('s-tcp'),
+  udp:   document.getElementById('s-udp'),
+  icmp:  document.getElementById('s-icmp'),
+  other: document.getElementById('s-other'),
+  warn:  document.getElementById('s-warn'),
+};
+
+// ── In-memory packet store (source of truth) ──────────────────────────────
+// Every received packet is pushed here. The DOM is just a view over this.
+let packetStore = [];
+const MAX_STORE = 2000;   // keep last 2000 packets in memory
+
+let eventSource = null;
+let currentFilter = 'all';  // mirrors the dropdown value
+
+// ── UI state ──────────────────────────────────────────────────────────────
+function setRunning(isRunning) {
+  btnStart.disabled  = isRunning;
+  btnStop.disabled   = !isRunning;
+  // Filter stays ENABLED at all times — it's purely a display filter now
+  if (isRunning) {
+    statusDot.classList.add('active');
+    statusLabel.textContent = 'CAPTURING';
+  } else {
+    statusDot.classList.remove('active');
+    statusLabel.textContent = 'IDLE';
+  }
+}
+
+function updateStats(s) {
+  statEls.total.textContent = s.total    ?? 0;
+  statEls.tcp.textContent   = s.tcp      ?? 0;
+  statEls.udp.textContent   = s.udp      ?? 0;
+  statEls.icmp.textContent  = s.icmp     ?? 0;
+  statEls.other.textContent = s.other    ?? 0;
+  statEls.warn.textContent  = s.warnings ?? 0;
+}
+
+// ── Row builder ───────────────────────────────────────────────────────────
+function protoBadge(proto) {
+  return `<span class="proto-badge proto-${proto.toLowerCase()}">${proto}</span>`;
+}
+
+function warnBadge(warning) {
+  if (!warning) return '';
+  return `<span class="warn-badge">&#9888; Unencrypted ${warning.service} :${warning.port}</span>`;
+}
+
+function buildRow(pkt) {
+  const row = document.createElement('div');
+  row.className = 'packet-row' + (pkt.warning ? ' warn-row' : '');
+  row.dataset.proto = pkt.proto;   // store protocol so we can filter without re-render
+  row.innerHTML = `
+    <span class="cell cell-id">${pkt.id}</span>
+    <span class="cell cell-ts">${pkt.timestamp}</span>
+    <span class="cell cell-src">${pkt.src}</span>
+    <span class="cell cell-dst">${pkt.dst}</span>
+    <span class="cell">${protoBadge(pkt.proto)}</span>
+    <span class="cell cell-size">${pkt.size}B</span>
+    <span class="cell">${warnBadge(pkt.warning)}</span>
+  `;
+  return row;
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────
+
+// Full re-render from store (used when filter changes)
+function renderAll() {
+  const filter = currentFilter;
+  const filtered = filter === 'all'
+    ? packetStore
+    : packetStore.filter(p => p.proto === filter);
+
+  packetList.innerHTML = '';
+
+  if (filtered.length === 0) {
+    const msg = packetStore.length === 0
+      ? `<div id="empty-state">
+           <span class="big-icon">&#9711;</span>
+           <span>Press <strong>Start</strong> to begin packet capture</span>
+           <span style="color:#3a4a5a;font-size:0.65rem;">Requires elevated privileges &mdash; see README</span>
+         </div>`
+      : `<div id="empty-state">
+           <span class="big-icon">&#9711;</span>
+           <span>No <strong>${filter}</strong> packets captured yet</span>
+           <span style="color:#3a4a5a;font-size:0.65rem;">${packetStore.length} total packets hidden by filter</span>
+         </div>`;
+    packetList.innerHTML = msg;
+  } else {
+    // Render at most last 500 matching rows to keep DOM light
+    const visible = filtered.slice(-500);
+    const frag = document.createDocumentFragment();
+    visible.forEach(p => frag.appendChild(buildRow(p)));
+    packetList.appendChild(frag);
+  }
+
+  updateFilterBadge(filtered.length);
+  packetList.scrollTop = packetList.scrollHeight;
+}
+
+// Append a single new packet row (used during live capture)
+function appendRow(pkt) {
+  // Remove empty-state if present
+  const es = document.getElementById('empty-state');
+  if (es) es.remove();
+
+  if (currentFilter !== 'all' && pkt.proto !== currentFilter) {
+    // Packet doesn't match current filter — store it but don't show it
+    updateFilterBadge();
+    return;
+  }
+
+  // Prune DOM if over 500 visible rows
+  const rows = packetList.querySelectorAll('.packet-row');
+  if (rows.length >= 500) rows[0].remove();
+
+  packetList.appendChild(buildRow(pkt));
+  packetList.scrollTop = packetList.scrollHeight;
+  updateFilterBadge();
+}
+
+function updateFilterBadge() {
+  if (currentFilter === 'all') {
+    filterCount.textContent = '';
+    filterCount.classList.remove('visible');
+    protoFilter.classList.remove('filtered');
+  } else {
+    const shown = packetStore.filter(p => p.proto === currentFilter).length;
+    filterCount.textContent = `${shown} shown`;
+    filterCount.classList.add('visible');
+    protoFilter.classList.add('filtered');
+  }
+}
+
+// ── SSE stream ────────────────────────────────────────────────────────────
+function openStream() {
+  if (eventSource) eventSource.close();
+  eventSource = new EventSource(`${API}/api/stream`);
+
+  eventSource.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    if (msg.type !== 'packet') return;
+
+    const pkt = msg.data;
+
+    // Store packet (trim store if over limit)
+    packetStore.push(pkt);
+    if (packetStore.length > MAX_STORE) packetStore.shift();
+
+    // Update global stats (always, regardless of filter)
+    updateStats(pkt.stats);
+
+    // Append to visible table if it passes the current filter
+    appendRow(pkt);
+  };
+}
+
+function closeStream() {
+  if (eventSource) { eventSource.close(); eventSource = null; }
+}
+
+// ── Filter dropdown — works live at any time ──────────────────────────────
+protoFilter.addEventListener('change', () => {
+  currentFilter = protoFilter.value;
+  renderAll();  // re-render from store with new filter
+});
+
+// ── Button handlers ───────────────────────────────────────────────────────
+btnStart.addEventListener('click', async () => {
+  try {
+    const res = await fetch(`${API}/api/start`, { method: 'POST' });
+    if (!res.ok) { alert('Backend error — is app.py running?'); return; }
+    setRunning(true);
+    openStream();
+  } catch {
+    alert('Cannot reach backend.\n\nMake sure app.py is running:\n  sudo python app.py');
+  }
+});
+
+btnStop.addEventListener('click', async () => {
+  try { await fetch(`${API}/api/stop`, { method: 'POST' }); } catch {}
+  closeStream();
+  setRunning(false);
+});
+
+btnClear.addEventListener('click', () => {
+  packetStore = [];
+  currentFilter = 'all';
+  protoFilter.value = 'all';
+  renderAll();
+});
+</script>
+</body>
+</html>
